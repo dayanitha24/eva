@@ -1,5 +1,3 @@
-
-
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -11,13 +9,13 @@ import pyjokes
 import wikipedia
 import requests
 import time
+import numpy as np
 
 # --- ML IMPORTS ---
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, classification_report
-import numpy as np
 # --------------------
 
 recognizer = sr.Recognizer()
@@ -26,7 +24,7 @@ recognizer = sr.Recognizer()
 def speak(text: str):
     engine = pyttsx3.init()
     voices = engine.getProperty("voices")
-    engine.setProperty('voice', voices[1].id)   # Female voice
+    engine.setProperty('voice', voices[1].id)  # Female voice
     engine.say(text)
     engine.runAndWait()
 
@@ -48,7 +46,7 @@ def listen_command() -> str:
 
 # -------------------- Fetch Weather -------------------- #
 def get_weather(city: str) -> str:
-    api_key = "<YOUR_API_KEY>"  
+    api_key = "<YOUR_API_KEY>"  # Replace with your OpenWeatherMap API key
     base_url = "http://api.openweathermap.org/data/2.5/weather?"
     url = f"{base_url}appid={api_key}&q={city}"
 
@@ -61,41 +59,66 @@ def get_weather(city: str) -> str:
     except:
         return "not found"
 
-
 # --- ML Training and Evaluation --- #
 def train_and_evaluate_model():
-    print("\n---  (Logistic Regression) ---")
+    print("\n--- Training EVA's ML Model (SVM) ---")
 
-    # Updated labeled dataset (calculator removed)
+    # Expanded labeled dataset
     commands = [
+        # Play songs
         "play a song by queen", "play the latest hits", "play some jazz music",
+        "play despacito", "play some music", "play song",
+        "play the song shape of you", "can you play a song", "start playing music",
+
+        # Get time
         "what time is it now", "tell me the time", "show me the time",
+        "what is the time", "give me the current time", "what's the time now",
+        "display time", "please tell the time", "check the time",
+
+        # Tell joke
         "tell me a joke", "i need a good joke", "can you crack a joke",
+        "make me laugh", "say something funny", "share a joke",
+
+        # Wiki search
         "who is elon musk", "what is the internet", "tell me about quantum physics",
+        "who is albert einstein", "what is artificial intelligence", "what is a black hole",
+
+        # Get weather
         "what is the weather like in hong kong", "what is the temperature", "weather report",
-        "stop the program", "exit now", "goodbye eva"
+        "what is the weather today", "how's the weather", "current weather conditions",
+
+        # Exit
+        "stop the program", "exit now", "goodbye eva", "quit the assistant", "terminate program"
     ]
+
     intents = [
-        "play_song", "play_song", "play_song",
-        "get_time", "get_time", "get_time",
-        "tell_joke", "tell_joke", "tell_joke",
-        "wiki_search", "wiki_search", "wiki_search",
-        "get_weather", "get_weather", "get_weather",
-        "exit_app", "exit_app", "exit_app"
+        # Play songs
+        *["play_song"] * 9,
+        # Get time
+        *["get_time"] * 9,
+        # Tell joke
+        *["tell_joke"] * 6,
+        # Wiki search
+        *["wiki_search"] * 6,
+        # Get weather
+        *["get_weather"] * 6,
+        # Exit
+        *["exit_app"] * 5
     ]
 
     unique_intents, counts = np.unique(intents, return_counts=True)
     print(f"Intent Distribution:\n{dict(zip(unique_intents, counts))}")
 
     X_train, X_test, y_train, y_test = train_test_split(
-        commands, intents, test_size=0.3, random_state=42, stratify=intents
+        commands, intents, test_size=0.25, random_state=42, stratify=intents
     )
 
     vectorizer = TfidfVectorizer()
     X_train_vec = vectorizer.fit_transform(X_train)
     X_test_vec = vectorizer.transform(X_test)
 
-    model = LogisticRegression(max_iter=1000)
+    # Use SVM classifier
+    model = SVC(kernel='linear', probability=True)
     model.fit(X_train_vec, y_train)
 
     y_pred = model.predict(X_test_vec)
@@ -103,17 +126,14 @@ def train_and_evaluate_model():
     print(f"\n✅ Test Accuracy: {accuracy:.2f}")
     print("\nClassification Report:")
     print(classification_report(y_test, y_pred))
-
     print("-----------------------------------------------------")
-    return model, vectorizer
 
+    return model, vectorizer
 
 LR_model = None
 TFIDF_vectorizer = None
 
-
-# -------------------- EVA Command Handler 
-# ----------------- #
+# -------------------- EVA Command Handler -------------------- #
 def process_eva():
     global LR_model, TFIDF_vectorizer
     command = listen_command()
@@ -122,15 +142,28 @@ def process_eva():
 
     print("-" * 55)
 
-    command_vec = TFIDF_vectorizer.transform([command])
-    predicted_intent = LR_model.predict(command_vec)[0]
-    probs = LR_model.predict_proba(command_vec)[0]
-    confidence = np.max(probs) * 100
+    # Hybrid check: quick rule-based fix before ML prediction
+    if "time" in command:
+        predicted_intent = "get_time"
+        confidence = 100
+    elif "weather" in command or "temperature" in command:
+        predicted_intent = "get_weather"
+        confidence = 100
+    else:
+        command_vec = TFIDF_vectorizer.transform([command])
+        predicted_intent = LR_model.predict(command_vec)[0]
+        probs = LR_model.predict_proba(command_vec)[0]
+        confidence = np.max(probs) * 100
 
     print(f"🧠 Predicted Intent: {predicted_intent} ({confidence:.2f}% confidence)")
 
-    # -------- Execute Actions ---------- #
+    # Confidence safeguard
+    if confidence < 35:
+        speak("I'm not sure I understood that. Please repeat.")
+        print("⚠ Low confidence prediction.")
+        return True
 
+    # -------- Execute Actions ---------- #
     if predicted_intent == 'play_song':
         song = command.replace('play', '').strip()
         speak(f"Playing {song}")
@@ -174,11 +207,10 @@ def process_eva():
 
     else:
         speak("I didn't understand that. Please repeat.")
-        print(f"❓ Unknown Command.")
+        print("❓ Unknown Command.")
 
     print("-" * 55)
     return True
-
 
 # -------------------- Main Program -------------------- #
 if __name__ == "__main__":
